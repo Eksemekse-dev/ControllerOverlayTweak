@@ -1,0 +1,53 @@
+name: Build iOS Dylib
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compile ControllerOverlayTweak.dylib
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode and find iOS SDK
+        id: sdk
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
+          SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "SDK_PATH=$SDK_PATH" >> "$GITHUB_OUTPUT"
+          echo "Using iOS SDK: $SDK_PATH"
+
+      - name: Compile dylib for arm64
+        run: |
+          mkdir -p build
+          clang \
+            -dynamiclib \
+            -arch arm64 \
+            -isysroot "${{ steps.sdk.outputs.SDK_PATH }}" \
+            -miphoneos-version-min=15.0 \
+            -fobjc-arc \
+            -framework Foundation \
+            -framework UIKit \
+            -framework GameController \
+            -Wl,-install_name,@rpath/ControllerOverlayTweak.dylib \
+            ControllerOverlayTweak.m \
+            -o build/ControllerOverlayTweak.dylib
+
+      - name: Verify built dylib
+        run: |
+          file build/ControllerOverlayTweak.dylib
+          otool -L build/ControllerOverlayTweak.dylib
+
+      - name: Upload dylib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ControllerOverlayTweak-dylib
+          path: build/ControllerOverlayTweak.dylib
+          if-no-files-found: error
