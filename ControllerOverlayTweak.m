@@ -49,9 +49,22 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 @implementation TouchProfile
 @end
 
+@interface PassthroughWindow : UIWindow
+@end
+
+@implementation PassthroughWindow
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    if (hit == self || hit == self.rootViewController.view) {
+        return nil;
+    }
+    return hit;
+}
+@end
+
 @interface OverlayControllerManager : NSObject
-@property (nonatomic, strong) UIWindow *overlayWindow;
-@property (nonatomic, strong) UIView *overlayView;
+@property (nonatomic, strong) PassthroughWindow *barWindow;
+@property (nonatomic, strong) PassthroughWindow *editorWindow;
 @property (nonatomic, strong) UIView *profileBar;
 @property (nonatomic, strong) UIView *editPanel;
 @property (nonatomic, strong) UIView *gestureMarker;
@@ -70,8 +83,8 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 @end
 
 @interface OverlayControllerManager (UIKitTouchInjection)
+- (UIWindowScene *)activeScene;
 - (UIWindow *)targetAppWindow;
-- (void)restoreAppKeyWindow;
 - (UITouch *)createTouchAtWindowPoint:(CGPoint)windowPoint inWindow:(UIWindow *)window phase:(UITouchPhase)phase;
 - (void)updateTouch:(UITouch *)touch toWindowPoint:(CGPoint)windowPoint phase:(UITouchPhase)phase;
 - (UIEvent *)touchesEventWithTouch:(UITouch *)touch;
@@ -92,7 +105,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 - (void)setup {
     [self loadDefaultProfiles];
     [self registerControllerObservers];
-    [self attachOverlayWindowWhenReady];
+    [self attachWindowsWhenReady];
 }
 
 - (TouchActionBinding *)currentBinding {
@@ -166,7 +179,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
         [self bindController:controller];
     }
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self showOverlayControls];
+        [self showBar];
     });
 }
 
@@ -174,7 +187,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     (void)note;
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([GCController controllers].count == 0 && !self.editMode) {
-            [self hideOverlay];
+            [self hideAll];
         }
     });
 }
@@ -234,56 +247,60 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     };
 }
 
-- (void)attachOverlayWindowWhenReady {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (self.overlayWindow) return;
+- (void)attachWindowsWhenReady {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIWindowScene *scene = [self activeScene];
+        if (!scene) return;
 
-        UIWindowScene *activeScene = nil;
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]] &&
-                scene.activationState == UISceneActivationStateForegroundActive) {
-                activeScene = (UIWindowScene *)scene;
-                break;
+        if (!self.barWindow) {
+            PassthroughWindow *bWin = [[PassthroughWindow alloc] initWithFrame:CGRectMake(20, 44, 420, 40)];
+            if (@available(iOS 13.0, *)) {
+                bWin.windowScene = scene;
             }
+            bWin.windowLevel = UIWindowLevelAlert + 1000;
+            bWin.backgroundColor = [UIColor clearColor];
+            bWin.hidden = YES;
+
+            UIViewController *vc = [[UIViewController alloc] init];
+            vc.view.backgroundColor = [UIColor clearColor];
+            bWin.rootViewController = vc;
+
+            self.barWindow = bWin;
+            [self buildBarUI];
         }
 
-        UIWindow *win = activeScene
-            ? [[UIWindow alloc] initWithWindowScene:activeScene]
-            : [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-
-        win.windowLevel = UIWindowLevelAlert + 100;
-        win.backgroundColor = [UIColor clearColor];
-        // Domyślnie ukryte i bez przechwytywania dotyku ręką
-        win.hidden = YES;
-        win.userInteractionEnabled = NO;
-
-        UIViewController *rootVC = [[UIViewController alloc] init];
-        UIView *overlay = [[UIView alloc] initWithFrame:win.bounds];
-        overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        overlay.backgroundColor = [UIColor clearColor];
-        overlay.userInteractionEnabled = NO;
-        rootVC.view = overlay;
-
-        win.rootViewController = rootVC;
-
-        self.overlayWindow = win;
-        self.overlayView = overlay;
-
-        [self buildUI];
-
         if ([GCController controllers].count > 0) {
-            [self showOverlayControls];
-        } else {
-            [self restoreAppKeyWindow];
+            [self showBar];
         }
     });
 }
 
-- (void)buildUI {
-    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(20, 40, 420, 40)];
-    bar.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.84];
+- (void)ensureEditorWindow {
+    if (self.editorWindow) return;
+    UIWindowScene *scene = [self activeScene];
+    if (!scene) return;
+
+    PassthroughWindow *eWin = [[PassthroughWindow alloc] initWithFrame:scene.coordinateSpace.bounds];
+    if (@available(iOS 13.0, *)) {
+        eWin.windowScene = scene;
+    }
+    eWin.windowLevel = UIWindowLevelAlert + 900;
+    eWin.backgroundColor = [UIColor clearColor];
+    eWin.hidden = YES;
+
+    UIViewController *vc = [[UIViewController alloc] init];
+    vc.view.backgroundColor = [UIColor clearColor];
+    eWin.rootViewController = vc;
+
+    self.editorWindow = eWin;
+    [self buildEditorUI];
+}
+
+- (void)buildBarUI {
+    UIView *bar = [[UIView alloc] initWithFrame:self.barWindow.bounds];
+    bar.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    bar.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
     bar.layer.cornerRadius = 10;
-    bar.userInteractionEnabled = YES;
 
     UIButton *profileBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     profileBtn.frame = CGRectMake(8, 4, 155, 32);
@@ -315,17 +332,20 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [hideBtn setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
     hideBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     [hideBtn setTitle:@"Ukryj" forState:UIControlStateNormal];
-    [hideBtn addTarget:self action:@selector(hideOverlay) forControlEvents:UIControlEventTouchUpInside];
+    [hideBtn addTarget:self action:@selector(hideAll) forControlEvents:UIControlEventTouchUpInside];
     [bar addSubview:hideBtn];
 
-    [self.overlayView addSubview:bar];
+    [self.barWindow.rootViewController.view addSubview:bar];
     self.profileBar = bar;
+    [self refreshUI];
+}
 
-    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(20, 86, 560, 42)];
+- (void)buildEditorUI {
+    UIView *root = self.editorWindow.rootViewController.view;
+
+    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(20, 92, 560, 42)];
     panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.86];
     panel.layer.cornerRadius = 10;
-    panel.hidden = YES;
-    panel.userInteractionEnabled = YES;
 
     UIButton *cycleBindingBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     cycleBindingBtn.frame = CGRectMake(8, 5, 130, 32);
@@ -381,7 +401,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [lenSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [panel addSubview:lenSlider];
 
-    [self.overlayView addSubview:panel];
+    [root addSubview:panel];
     self.editPanel = panel;
 
     CAShapeLayer *preview = [CAShapeLayer layer];
@@ -389,8 +409,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     preview.fillColor = [UIColor clearColor].CGColor;
     preview.lineWidth = 2.5;
     preview.lineDashPattern = @[@6, @4];
-    preview.hidden = YES;
-    [self.overlayView.layer addSublayer:preview];
+    [root.layer addSublayer:preview];
     self.swipePreviewLayer = preview;
 
     UIView *marker = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 32, 32)];
@@ -398,8 +417,6 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     marker.layer.cornerRadius = 16;
     marker.layer.borderWidth = 2;
     marker.layer.borderColor = [UIColor cyanColor].CGColor;
-    marker.hidden = YES;
-    marker.userInteractionEnabled = YES;
 
     UILabel *caption = [[UILabel alloc] initWithFrame:CGRectMake(-55, 34, 142, 20)];
     caption.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.78];
@@ -414,43 +431,43 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleMarkerPan:)];
     [marker addGestureRecognizer:pan];
 
-    [self.overlayView addSubview:marker];
+    [root addSubview:marker];
     self.gestureMarker = marker;
-
     [self refreshUI];
 }
 
-- (void)showOverlayControls {
-    self.overlayWindow.hidden = NO;
-    self.overlayWindow.userInteractionEnabled = YES;
-    self.overlayView.userInteractionEnabled = YES;
-    self.profileBar.hidden = NO;
-    [self refreshUI];
-    if (!self.editMode) {
-        [self restoreAppKeyWindow];
+- (void)showBar {
+    if (!self.barWindow) {
+        [self attachWindowsWhenReady];
+        return;
     }
+    self.barWindow.hidden = NO;
+    [self refreshUI];
 }
 
-- (void)hideOverlay {
+- (void)hideAll {
     self.editMode = NO;
-    self.editPanel.hidden = YES;
-    self.gestureMarker.hidden = YES;
-    self.swipePreviewLayer.hidden = YES;
-    self.overlayView.userInteractionEnabled = NO;
-    self.overlayWindow.userInteractionEnabled = NO;
-    self.overlayWindow.hidden = YES;
-    [self restoreAppKeyWindow];
+    if (self.editorWindow) {
+        self.editorWindow.hidden = YES;
+        self.editorWindow = nil;
+    }
+    if (self.barWindow) {
+        self.barWindow.hidden = YES;
+    }
 }
 
 - (void)toggleEditMode {
     self.editMode = !self.editMode;
-    self.editPanel.hidden = !self.editMode;
-    self.gestureMarker.hidden = !self.editMode;
-    self.swipePreviewLayer.hidden = !self.editMode;
-    [self refreshUI];
-    if (!self.editMode) {
-        [self restoreAppKeyWindow];
+    if (self.editMode) {
+        [self ensureEditorWindow];
+        self.editorWindow.hidden = NO;
+    } else {
+        if (self.editorWindow) {
+            self.editorWindow.hidden = YES;
+            self.editorWindow = nil;
+        }
     }
+    [self refreshUI];
 }
 
 - (void)addNewBinding {
@@ -492,9 +509,9 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
 - (void)promptRenameSelectedBinding {
     TouchActionBinding *b = [self currentBinding];
-    if (!b) return;
+    if (!b || !self.editorWindow) return;
 
-    UIViewController *topVC = self.overlayWindow.rootViewController;
+    UIViewController *topVC = self.editorWindow.rootViewController;
     while (topVC.presentedViewController) {
         topVC = topVC.presentedViewController;
     }
@@ -509,10 +526,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     }];
 
     __weak typeof(self) weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Anuluj" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
-        (void)action;
-        [weakSelf restoreAppKeyWindow];
-    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Anuluj" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Zapisz" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
         NSString *typed = alert.textFields.firstObject.text;
@@ -521,7 +535,6 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
             b.label = trimmed;
             [weakSelf refreshUI];
         }
-        [weakSelf restoreAppKeyWindow];
     }]];
 
     [topVC presentViewController:alert animated:YES completion:nil];
@@ -559,10 +572,10 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
 - (void)handleMarkerPan:(UIPanGestureRecognizer *)pan {
     TouchActionBinding *b = [self currentBinding];
-    if (!self.editMode || !b || !self.overlayView) return;
+    if (!self.editMode || !b || !self.editorWindow) return;
 
-    CGSize size = self.overlayView.bounds.size;
-    CGPoint loc = [pan locationInView:self.overlayView];
+    CGSize size = self.editorWindow.bounds.size;
+    CGPoint loc = [pan locationInView:self.editorWindow.rootViewController.view];
 
     b.normalizedX = MIN(MAX(loc.x / size.width, 0.05), 0.95);
     b.normalizedY = MIN(MAX(loc.y / size.height, 0.15), 0.92);
@@ -570,7 +583,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 }
 
 - (void)refreshUI {
-    if (!self.activeProfile || !self.overlayView) return;
+    if (!self.activeProfile) return;
 
     UIButton *profileBtn = [self.profileBar viewWithTag:101];
     [profileBtn setTitle:[NSString stringWithFormat:@"Profil: %@", self.activeProfile.name] forState:UIControlStateNormal];
@@ -579,11 +592,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [editBtn setTitle:(self.editMode ? @"Gotowe" : @"Edytuj") forState:UIControlStateNormal];
 
     TouchActionBinding *b = [self currentBinding];
-    if (!b) {
-        self.gestureMarker.hidden = YES;
-        self.swipePreviewLayer.hidden = YES;
-        return;
-    }
+    if (!b || !self.editorWindow) return;
 
     NSString *inputName = [TouchActionBinding nameForInputType:b.inputType];
     [self.bindingCycleBtn setTitle:[NSString stringWithFormat:@"%lu/%lu: %@",
@@ -599,53 +608,56 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
         slider.value = b.swipeUpLength;
     }
 
-    CGSize size = self.overlayView.bounds.size;
+    CGSize size = self.editorWindow.bounds.size;
     CGFloat x = b.normalizedX * size.width;
     CGFloat y = b.normalizedY * size.height;
     self.gestureMarker.center = CGPointMake(x, y);
 
-    if (self.editMode) {
-        UIBezierPath *path = [UIBezierPath bezierPath];
-        [path moveToPoint:CGPointMake(x, y)];
-        [path addLineToPoint:CGPointMake(x, y - b.swipeUpLength)];
-        self.swipePreviewLayer.path = path.CGPath;
-        self.swipePreviewLayer.hidden = NO;
-    } else {
-        self.swipePreviewLayer.hidden = YES;
-    }
+    UIBezierPath *path = [UIBezierPath bezierPath];
+    [path moveToPoint:CGPointMake(x, y)];
+    [path addLineToPoint:CGPointMake(x, y - b.swipeUpLength)];
+    self.swipePreviewLayer.path = path.CGPath;
 }
 
 @end
 
 @implementation OverlayControllerManager (UIKitTouchInjection)
 
-- (UIWindow *)targetAppWindow {
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]] ||
-            scene.activationState != UISceneActivationStateForegroundActive) {
-            continue;
-        }
-        UIWindowScene *winScene = (UIWindowScene *)scene;
-        for (UIWindow *win in winScene.windows) {
-            if (win != self.overlayWindow && !win.hidden && win.alpha > 0.01 && win.isKeyWindow) {
-                return win;
+- (UIWindowScene *)activeScene {
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]] &&
+                scene.activationState == UISceneActivationStateForegroundActive) {
+                return (UIWindowScene *)scene;
             }
         }
-        for (UIWindow *win in winScene.windows) {
-            if (win != self.overlayWindow && !win.hidden && win.alpha > 0.01) {
-                return win;
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                return (UIWindowScene *)scene;
+            }
+        }
+    }
+    return nil;
+}
+
+- (UIWindow *)targetAppWindow {
+    if (@available(iOS 13.0, *)) {
+        UIWindowScene *scene = [self activeScene];
+        if (scene) {
+            for (UIWindow *win in scene.windows) {
+                if (win != self.barWindow && win != self.editorWindow && !win.hidden && win.alpha > 0.01 && win.isKeyWindow) {
+                    return win;
+                }
+            }
+            for (UIWindow *win in scene.windows) {
+                if (win != self.barWindow && win != self.editorWindow && !win.hidden && win.alpha > 0.01) {
+                    return win;
+                }
             }
         }
     }
     UIWindow *fallback = [UIApplication sharedApplication].keyWindow;
-    return (fallback != self.overlayWindow) ? fallback : nil;
-}
-
-- (void)restoreAppKeyWindow {
-    UIWindow *appWin = [self targetAppWindow];
-    if (appWin && appWin != self.overlayWindow) {
-        [appWin makeKeyWindow];
-    }
+    return (fallback != self.barWindow && fallback != self.editorWindow) ? fallback : nil;
 }
 
 - (UITouch *)createTouchAtWindowPoint:(CGPoint)windowPoint inWindow:(UIWindow *)window phase:(UITouchPhase)phase {
