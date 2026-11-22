@@ -21,9 +21,12 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 @property (nonatomic, assign) CGFloat normalizedX;
 @property (nonatomic, assign) CGFloat normalizedY;
 @property (nonatomic, assign) CGFloat swipeUpLength;
-@property (nonatomic, assign) NSTimeInterval duration;
+@property (nonatomic, assign) NSTimeInterval moveDuration;
 @property (nonatomic, assign) CGFloat triggerThreshold;
-@property (nonatomic, assign) BOOL wasActive;
+@property (nonatomic, assign) BOOL isHolding;
+@property (nonatomic, strong) UITouch *activeTouch;
+@property (nonatomic, assign) CGPoint currentHeldPoint;
+@property (nonatomic, strong) NSTimer *moveTimer;
 @end
 
 @implementation TouchActionBinding
@@ -39,14 +42,63 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
         case PadInputRightShoulder: return @"RB/R1";
     }
 }
+
+- (NSDictionary *)toDictionary {
+    return @{
+        @"label": self.label ?: @"Akcja",
+        @"inputType": @(self.inputType),
+        @"normalizedX": @(self.normalizedX),
+        @"normalizedY": @(self.normalizedY),
+        @"swipeUpLength": @(self.swipeUpLength),
+        @"moveDuration": @(self.moveDuration > 0 ? self.moveDuration : 0.16),
+        @"triggerThreshold": @(self.triggerThreshold > 0 ? self.triggerThreshold : 0.5)
+    };
+}
+
++ (instancetype)fromDictionary:(NSDictionary *)dict {
+    TouchActionBinding *b = [[TouchActionBinding alloc] init];
+    b.label = [dict[@"label"] isKindOfClass:[NSString class]] ? dict[@"label"] : @"Akcja";
+    b.inputType = [dict[@"inputType"] integerValue];
+    b.normalizedX = dict[@"normalizedX"] ? [dict[@"normalizedX"] doubleValue] : 0.75;
+    b.normalizedY = dict[@"normalizedY"] ? [dict[@"normalizedY"] doubleValue] : 0.75;
+    b.swipeUpLength = dict[@"swipeUpLength"] ? [dict[@"swipeUpLength"] doubleValue] : 140.0;
+    b.moveDuration = dict[@"moveDuration"] ? [dict[@"moveDuration"] doubleValue] : 0.16;
+    b.triggerThreshold = dict[@"triggerThreshold"] ? [dict[@"triggerThreshold"] doubleValue] : 0.5;
+    return b;
+}
 @end
 
 @interface TouchProfile : NSObject
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic, strong) NSMutableArray<TouchActionBinding *> *bindings;
+- (NSDictionary *)toDictionary;
++ (instancetype)fromDictionary:(NSDictionary *)dict;
 @end
 
 @implementation TouchProfile
+- (NSDictionary *)toDictionary {
+    NSMutableArray *arr = [NSMutableArray arrayWithCapacity:self.bindings.count];
+    for (TouchActionBinding *b in self.bindings) {
+        [arr addObject:[b toDictionary]];
+    }
+    return @{
+        @"name": self.name ?: @"Profil",
+        @"bindings": arr
+    };
+}
+
++ (instancetype)fromDictionary:(NSDictionary *)dict {
+    TouchProfile *p = [[TouchProfile alloc] init];
+    p.name = [dict[@"name"] isKindOfClass:[NSString class]] ? dict[@"name"] : @"Profil";
+    p.bindings = [NSMutableArray array];
+    NSArray *rawBindings = [dict[@"bindings"] isKindOfClass:[NSArray class]] ? dict[@"bindings"] : @[];
+    for (NSDictionary *bDict in rawBindings) {
+        if ([bDict isKindOfClass:[NSDictionary class]]) {
+            [p.bindings addObject:[TouchActionBinding fromDictionary:bDict]];
+        }
+    }
+    return p;
+}
 @end
 
 @interface PassthroughWindow : UIWindow
@@ -79,7 +131,9 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 @property (nonatomic, assign) BOOL editMode;
 + (instancetype)shared;
 - (void)setup;
-- (void)performSwipeUpForBinding:(TouchActionBinding *)binding;
+- (void)saveProfilesToFile;
+- (void)beginHoldSwipeUpForBinding:(TouchActionBinding *)binding;
+- (void)endHoldSwipeUpForBinding:(TouchActionBinding *)binding;
 @end
 
 @interface OverlayControllerManager (UIKitTouchInjection)
@@ -103,9 +157,67 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 }
 
 - (void)setup {
-    [self loadDefaultProfiles];
+    [self loadProfilesFromFile];
     [self registerControllerObservers];
     [self attachWindowsWhenReady];
+}
+
+- (NSString *)profilesFilePath {
+    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"default_app";
+    NSString *safeId = [bundleId stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+    NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *docDir = paths.firstObject ?: NSTemporaryDirectory();
+    return [docDir stringByAppendingPathComponent:[NSString stringWithFormat:@"ControllerOverlayProfiles_%@.json", safeId]];
+}
+
+- (void)saveProfilesToFile {
+    if (!self.profiles) return;
+    NSMutableArray *rawProfiles = [NSMutableArray arrayWithCapacity:self.profiles.count];
+    for (TouchProfile *p in self.profiles) {
+        [rawProfiles addObject:[p toDictionary]];
+    }
+    NSUInteger activeIdx = [self.profiles indexOfObject:self.activeProfile];
+    if (activeIdx == NSNotFound) activeIdx = 0;
+
+    NSDictionary *payload = @{
+        @"activeProfileIndex": @(activeIdx),
+        @"profiles": rawProfiles
+    };
+
+    NSError *err = nil;
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:payload options:NSJSONWritingPrettyPrinted error:&err];
+    if (jsonData && !err) {
+        [jsonData writeToFile:[self profilesFilePath] atomically:YES];
+    }
+}
+
+- (void)loadProfilesFromFile {
+    NSString *path = [self profilesFilePath];
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (data.length > 0) {
+        NSError *err = nil;
+        NSDictionary *payload = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
+        if (!err && [payload isKindOfClass:[NSDictionary class]]) {
+            NSArray *rawProfiles = [payload[@"profiles"] isKindOfClass:[NSArray class]] ? payload[@"profiles"] : nil;
+            if (rawProfiles.count > 0) {
+                NSMutableArray *loaded = [NSMutableArray arrayWithCapacity:rawProfiles.count];
+                for (NSDictionary *pDict in rawProfiles) {
+                    if ([pDict isKindOfClass:[NSDictionary class]]) {
+                        [loaded addObject:[TouchProfile fromDictionary:pDict]];
+                    }
+                }
+                if (loaded.count > 0) {
+                    self.profiles = loaded;
+                    NSUInteger idx = [payload[@"activeProfileIndex"] unsignedIntegerValue];
+                    self.activeProfile = (idx < self.profiles.count) ? self.profiles[idx] : self.profiles.firstObject;
+                    self.selectedBindingIndex = 0;
+                    return;
+                }
+            }
+        }
+    }
+    [self loadDefaultProfiles];
+    [self saveProfilesToFile];
 }
 
 - (TouchActionBinding *)currentBinding {
@@ -123,7 +235,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     b1.normalizedX = 0.75;
     b1.normalizedY = 0.75;
     b1.swipeUpLength = 120.0;
-    b1.duration = 0.16;
+    b1.moveDuration = 0.16;
     b1.triggerThreshold = 0.5;
 
     TouchActionBinding *b2 = [[TouchActionBinding alloc] init];
@@ -132,7 +244,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     b2.normalizedX = 0.25;
     b2.normalizedY = 0.75;
     b2.swipeUpLength = 160.0;
-    b2.duration = 0.18;
+    b2.moveDuration = 0.18;
     b2.triggerThreshold = 0.5;
 
     TouchProfile *p1 = [[TouchProfile alloc] init];
@@ -145,7 +257,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     p2b1.normalizedX = 0.78;
     p2b1.normalizedY = 0.80;
     p2b1.swipeUpLength = 240.0;
-    p2b1.duration = 0.24;
+    p2b1.moveDuration = 0.24;
     p2b1.triggerThreshold = 0.5;
 
     TouchProfile *p2 = [[TouchProfile alloc] init];
@@ -186,6 +298,13 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 - (void)controllerDisconnected:(NSNotification *)note {
     (void)note;
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.activeProfile) {
+            for (TouchActionBinding *b in self.activeProfile.bindings) {
+                if (b.isHolding) {
+                    [self endHoldSwipeUpForBinding:b];
+                }
+            }
+        }
         if ([GCController controllers].count == 0 && !self.editMode) {
             [self hideAll];
         }
@@ -205,11 +324,10 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
             BOOL isAnalog = (type == PadInputRightTrigger || type == PadInputLeftTrigger);
             BOOL activeNow = isAnalog ? (value >= b.triggerThreshold) : pressed;
 
-            if (activeNow && !b.wasActive) {
-                b.wasActive = YES;
-                [strongSelf performSwipeUpForBinding:b];
-            } else if (!activeNow) {
-                b.wasActive = NO;
+            if (activeNow && !b.isHolding) {
+                [strongSelf beginHoldSwipeUpForBinding:b];
+            } else if (!activeNow && b.isHolding) {
+                [strongSelf endHoldSwipeUpForBinding:b];
             }
         }
     });
@@ -272,7 +390,6 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
             [self buildBarUI];
         }
 
-        // Pokazujemy pasek po starcie, aby łatwo przetestować GUI nawet bez podłączonego pada
         [self showBar];
     });
 }
@@ -466,6 +583,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
 - (void)hideAll {
     self.editMode = NO;
+    [self saveProfilesToFile];
     if (self.editorWindow) {
         self.editorWindow.hidden = YES;
         self.editorWindow = nil;
@@ -481,6 +599,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
         [self ensureEditorWindow];
         self.editorWindow.hidden = NO;
     } else {
+        [self saveProfilesToFile];
         if (self.editorWindow) {
             self.editorWindow.hidden = YES;
             self.editorWindow = nil;
@@ -499,11 +618,12 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     newB.normalizedX = 0.5;
     newB.normalizedY = 0.65;
     newB.swipeUpLength = 140.0;
-    newB.duration = 0.18;
+    newB.moveDuration = 0.16;
     newB.triggerThreshold = 0.5;
 
     [self.activeProfile.bindings addObject:newB];
     self.selectedBindingIndex = self.activeProfile.bindings.count - 1;
+    [self saveProfilesToFile];
 
     if (!self.editMode) {
         [self toggleEditMode];
@@ -523,6 +643,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     if (!b) return;
     NSInteger nextType = ((NSInteger)b.inputType + 1) % 8;
     b.inputType = (PadInputBinding)nextType;
+    [self saveProfilesToFile];
     [self refreshUI];
 }
 
@@ -552,6 +673,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
         NSString *trimmed = [typed stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (trimmed.length > 0) {
             b.label = trimmed;
+            [weakSelf saveProfilesToFile];
             [weakSelf refreshUI];
         }
     }]];
@@ -564,12 +686,14 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     if (!b) return;
     b.swipeUpLength = sender.value;
     [self refreshUI];
+    [self saveProfilesToFile];
 }
 
 - (void)decreaseSwipeLength {
     TouchActionBinding *b = [self currentBinding];
     if (!b) return;
     b.swipeUpLength = MAX(20.0, b.swipeUpLength - 20.0);
+    [self saveProfilesToFile];
     [self refreshUI];
 }
 
@@ -577,6 +701,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     TouchActionBinding *b = [self currentBinding];
     if (!b) return;
     b.swipeUpLength = MIN(500.0, b.swipeUpLength + 20.0);
+    [self saveProfilesToFile];
     [self refreshUI];
 }
 
@@ -586,6 +711,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     NSUInteger nextIdx = (idx == NSNotFound) ? 0 : (idx + 1) % self.profiles.count;
     self.activeProfile = self.profiles[nextIdx];
     self.selectedBindingIndex = 0;
+    [self saveProfilesToFile];
     [self refreshUI];
 }
 
@@ -599,6 +725,9 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     b.normalizedX = MIN(MAX(loc.x / size.width, 0.05), 0.95);
     b.normalizedY = MIN(MAX(loc.y / size.height, 0.15), 0.92);
     [self refreshUI];
+    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
+        [self saveProfilesToFile];
+    }
 }
 
 - (void)refreshUI {
@@ -790,32 +919,69 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     }
 }
 
-- (void)performSwipeUpForBinding:(TouchActionBinding *)binding {
+- (void)beginHoldSwipeUpForBinding:(TouchActionBinding *)binding {
     if (!binding) return;
+    if (binding.isHolding) {
+        [self endHoldSwipeUpForBinding:binding];
+    }
+
     UIWindow *window = [self targetAppWindow];
     if (!window) return;
 
     CGSize size = window.bounds.size;
     CGPoint startPt = CGPointMake(binding.normalizedX * size.width,
                                   binding.normalizedY * size.height);
-    CGFloat length = binding.swipeUpLength;
-    NSTimeInterval duration = MAX(binding.duration, 0.06);
+    CGFloat targetY = startPt.y - binding.swipeUpLength;
+    CGPoint targetPt = CGPointMake(startPt.x, targetY);
+    NSTimeInterval duration = MAX(binding.moveDuration > 0 ? binding.moveDuration : 0.16, 0.06);
 
-    NSInteger steps = 12;
-    NSTimeInterval stepInterval = duration / steps;
+    binding.isHolding = YES;
+    binding.currentHeldPoint = startPt;
 
     UITouch *touch = [self createTouchAtWindowPoint:startPt inWindow:window phase:UITouchPhaseBegan];
+    binding.activeTouch = touch;
     [self dispatchTouch:touch];
 
-    for (NSInteger i = 1; i <= steps; i++) {
-        CGFloat progress = (CGFloat)i / (CGFloat)steps;
-        CGPoint currentPt = CGPointMake(startPt.x, startPt.y - (length * progress));
-        UITouchPhase phase = (i == steps) ? UITouchPhaseEnded : UITouchPhaseMoved;
+    NSInteger totalSteps = 10;
+    NSTimeInterval interval = duration / totalSteps;
+    __block NSInteger currentStep = 0;
 
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * stepInterval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self updateTouch:touch toWindowPoint:currentPt phase:phase];
-            [self dispatchTouch:touch];
-        });
+    __weak typeof(self) weakSelf = self;
+    binding.moveTimer = [NSTimer scheduledTimerWithTimeInterval:interval repeats:YES block:^(NSTimer * _Nonnull timer) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || !binding.isHolding || !binding.activeTouch) {
+            [timer invalidate];
+            return;
+        }
+        currentStep++;
+        CGFloat progress = MIN((CGFloat)currentStep / (CGFloat)totalSteps, 1.0);
+        CGPoint nextPt = CGPointMake(startPt.x, startPt.y - (binding.swipeUpLength * progress));
+        binding.currentHeldPoint = nextPt;
+
+        [strongSelf updateTouch:binding.activeTouch toWindowPoint:nextPt phase:UITouchPhaseMoved];
+        [strongSelf dispatchTouch:binding.activeTouch];
+
+        if (currentStep >= totalSteps) {
+            [timer invalidate];
+            binding.moveTimer = nil;
+            binding.currentHeldPoint = targetPt;
+        }
+    }];
+}
+
+- (void)endHoldSwipeUpForBinding:(TouchActionBinding *)binding {
+    if (!binding) return;
+    binding.isHolding = NO;
+
+    if (binding.moveTimer) {
+        [binding.moveTimer invalidate];
+        binding.moveTimer = nil;
+    }
+
+    if (binding.activeTouch) {
+        [self updateTouch:binding.activeTouch toWindowPoint:binding.currentHeldPoint phase:UITouchPhaseEnded];
+        [self dispatchTouch:binding.activeTouch];
+        binding.activeTouch = nil;
     }
 }
 
