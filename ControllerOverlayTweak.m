@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#include <math.h>
 
 typedef NS_ENUM(NSInteger, PadInputBinding) {
     PadInputRightTrigger = 0, // RT / R2
@@ -20,13 +21,15 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 @property (nonatomic, assign) PadInputBinding inputType;
 @property (nonatomic, assign) CGFloat normalizedX;
 @property (nonatomic, assign) CGFloat normalizedY;
-@property (nonatomic, assign) CGFloat swipeUpLength;
+@property (nonatomic, assign) CGFloat swipeUpLength;    // długość przesunięcia (w punktach)
+@property (nonatomic, assign) CGFloat rotationDeg;      // kąt obrotu w stopniach (0 = w górę, + = zgodnie ze wskazówkami zegara)
 @property (nonatomic, assign) NSTimeInterval moveDuration;
 @property (nonatomic, assign) CGFloat triggerThreshold;
 @property (nonatomic, assign) BOOL isHolding;
 @property (nonatomic, strong) UITouch *activeTouch;
 @property (nonatomic, assign) CGPoint currentHeldPoint;
 @property (nonatomic, strong) NSTimer *moveTimer;
+- (CGPoint)targetPointFromStartPoint:(CGPoint)startPt;
 @end
 
 @implementation TouchActionBinding
@@ -43,6 +46,16 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     }
 }
 
+- (CGPoint)targetPointFromStartPoint:(CGPoint)startPt {
+    // Bazowy wektor w górę w układzie UIKit to (0, -swipeUpLength)
+    CGFloat rad = self.rotationDeg * (CGFloat)(M_PI / 180.0);
+    CGFloat baseX = 0.0;
+    CGFloat baseY = -self.swipeUpLength;
+    CGFloat rotX = baseX * cos(rad) - baseY * sin(rad);
+    CGFloat rotY = baseX * sin(rad) + baseY * cos(rad);
+    return CGPointMake(startPt.x + rotX, startPt.y + rotY);
+}
+
 - (NSDictionary *)toDictionary {
     return @{
         @"label": self.label ?: @"Akcja",
@@ -50,6 +63,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
         @"normalizedX": @(self.normalizedX),
         @"normalizedY": @(self.normalizedY),
         @"swipeUpLength": @(self.swipeUpLength),
+        @"rotationDeg": @(self.rotationDeg),
         @"moveDuration": @(self.moveDuration > 0 ? self.moveDuration : 0.16),
         @"triggerThreshold": @(self.triggerThreshold > 0 ? self.triggerThreshold : 0.5)
     };
@@ -62,6 +76,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     b.normalizedX = dict[@"normalizedX"] ? [dict[@"normalizedX"] doubleValue] : 0.75;
     b.normalizedY = dict[@"normalizedY"] ? [dict[@"normalizedY"] doubleValue] : 0.75;
     b.swipeUpLength = dict[@"swipeUpLength"] ? [dict[@"swipeUpLength"] doubleValue] : 140.0;
+    b.rotationDeg = dict[@"rotationDeg"] ? [dict[@"rotationDeg"] doubleValue] : 0.0;
     b.moveDuration = dict[@"moveDuration"] ? [dict[@"moveDuration"] doubleValue] : 0.16;
     b.triggerThreshold = dict[@"triggerThreshold"] ? [dict[@"triggerThreshold"] doubleValue] : 0.5;
     return b;
@@ -123,6 +138,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 @property (nonatomic, strong) UILabel *markerCaptionLabel;
 @property (nonatomic, strong) CAShapeLayer *swipePreviewLayer;
 @property (nonatomic, strong) UILabel *lengthLabel;
+@property (nonatomic, strong) UILabel *angleLabel;
 @property (nonatomic, strong) UIButton *inputTypeBtn;
 @property (nonatomic, strong) UIButton *bindingCycleBtn;
 @property (nonatomic, strong) NSMutableArray<TouchProfile *> *profiles;
@@ -132,8 +148,8 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 + (instancetype)shared;
 - (void)setup;
 - (void)saveProfilesToFile;
-- (void)beginHoldSwipeUpForBinding:(TouchActionBinding *)binding;
-- (void)endHoldSwipeUpForBinding:(TouchActionBinding *)binding;
+- (void)beginHoldSwipeForBinding:(TouchActionBinding *)binding;
+- (void)endHoldSwipeForBinding:(TouchActionBinding *)binding;
 @end
 
 @interface OverlayControllerManager (UIKitTouchInjection)
@@ -235,6 +251,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     b1.normalizedX = 0.75;
     b1.normalizedY = 0.75;
     b1.swipeUpLength = 120.0;
+    b1.rotationDeg = 0.0;
     b1.moveDuration = 0.16;
     b1.triggerThreshold = 0.5;
 
@@ -244,6 +261,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     b2.normalizedX = 0.25;
     b2.normalizedY = 0.75;
     b2.swipeUpLength = 160.0;
+    b2.rotationDeg = 0.0;
     b2.moveDuration = 0.18;
     b2.triggerThreshold = 0.5;
 
@@ -257,6 +275,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     p2b1.normalizedX = 0.78;
     p2b1.normalizedY = 0.80;
     p2b1.swipeUpLength = 240.0;
+    p2b1.rotationDeg = 0.0;
     p2b1.moveDuration = 0.24;
     p2b1.triggerThreshold = 0.5;
 
@@ -301,7 +320,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
         if (self.activeProfile) {
             for (TouchActionBinding *b in self.activeProfile.bindings) {
                 if (b.isHolding) {
-                    [self endHoldSwipeUpForBinding:b];
+                    [self endHoldSwipeForBinding:b];
                 }
             }
         }
@@ -325,9 +344,9 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
             BOOL activeNow = isAnalog ? (value >= b.triggerThreshold) : pressed;
 
             if (activeNow && !b.isHolding) {
-                [strongSelf beginHoldSwipeUpForBinding:b];
+                [strongSelf beginHoldSwipeForBinding:b];
             } else if (!activeNow && b.isHolding) {
-                [strongSelf endHoldSwipeUpForBinding:b];
+                [strongSelf endHoldSwipeForBinding:b];
             }
         }
     });
@@ -470,13 +489,13 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 - (void)buildEditorUI {
     UIView *root = self.editorWindow.rootViewController.view;
 
-    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(20, 92, 560, 42)];
+    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(20, 92, 650, 42)];
     panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.88];
     panel.layer.cornerRadius = 10;
     panel.userInteractionEnabled = YES;
 
     UIButton *cycleBindingBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    cycleBindingBtn.frame = CGRectMake(8, 5, 130, 32);
+    cycleBindingBtn.frame = CGRectMake(8, 5, 118, 32);
     cycleBindingBtn.userInteractionEnabled = YES;
     [cycleBindingBtn setTitleColor:[UIColor systemCyanColor] forState:UIControlStateNormal];
     cycleBindingBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
@@ -485,7 +504,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     self.bindingCycleBtn = cycleBindingBtn;
 
     UIButton *renameBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    renameBtn.frame = CGRectMake(142, 5, 70, 32);
+    renameBtn.frame = CGRectMake(129, 5, 62, 32);
     renameBtn.userInteractionEnabled = YES;
     [renameBtn setTitleColor:[UIColor systemYellowColor] forState:UIControlStateNormal];
     renameBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
@@ -494,7 +513,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [panel addSubview:renameBtn];
 
     UIButton *inputBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    inputBtn.frame = CGRectMake(216, 5, 78, 32);
+    inputBtn.frame = CGRectMake(194, 5, 74, 32);
     inputBtn.userInteractionEnabled = YES;
     [inputBtn setTitleColor:[UIColor systemOrangeColor] forState:UIControlStateNormal];
     inputBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
@@ -503,15 +522,15 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     self.inputTypeBtn = inputBtn;
 
     UIButton *minusBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    minusBtn.frame = CGRectMake(298, 5, 32, 32);
+    minusBtn.frame = CGRectMake(271, 5, 28, 32);
     minusBtn.userInteractionEnabled = YES;
     [minusBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    minusBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    minusBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
     [minusBtn setTitle:@"-" forState:UIControlStateNormal];
     [minusBtn addTarget:self action:@selector(decreaseSwipeLength) forControlEvents:UIControlEventTouchUpInside];
     [panel addSubview:minusBtn];
 
-    UILabel *lenLbl = [[UILabel alloc] initWithFrame:CGRectMake(332, 5, 72, 32)];
+    UILabel *lenLbl = [[UILabel alloc] initWithFrame:CGRectMake(300, 5, 62, 32)];
     lenLbl.textColor = [UIColor whiteColor];
     lenLbl.font = [UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightBold];
     lenLbl.textAlignment = NSTextAlignmentCenter;
@@ -519,21 +538,56 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     self.lengthLabel = lenLbl;
 
     UIButton *plusBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    plusBtn.frame = CGRectMake(406, 5, 32, 32);
+    plusBtn.frame = CGRectMake(363, 5, 28, 32);
     plusBtn.userInteractionEnabled = YES;
     [plusBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    plusBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    plusBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
     [plusBtn setTitle:@"+" forState:UIControlStateNormal];
     [plusBtn addTarget:self action:@selector(increaseSwipeLength) forControlEvents:UIControlEventTouchUpInside];
     [panel addSubview:plusBtn];
 
-    UISlider *lenSlider = [[UISlider alloc] initWithFrame:CGRectMake(442, 5, 110, 32)];
+    UISlider *lenSlider = [[UISlider alloc] initWithFrame:CGRectMake(394, 5, 86, 32)];
     lenSlider.minimumValue = 20.0;
     lenSlider.maximumValue = 500.0;
     lenSlider.userInteractionEnabled = YES;
     lenSlider.tag = 201;
     [lenSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [panel addSubview:lenSlider];
+
+    // Obrót suwaka/gestu w lewo (-15°) i w prawo (+15°)
+    UIButton *rotLeftBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    rotLeftBtn.frame = CGRectMake(484, 5, 34, 32);
+    rotLeftBtn.userInteractionEnabled = YES;
+    [rotLeftBtn setTitleColor:[UIColor systemTealColor] forState:UIControlStateNormal];
+    rotLeftBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [rotLeftBtn setTitle:@"↺" forState:UIControlStateNormal];
+    [rotLeftBtn addTarget:self action:@selector(rotateLeft) forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:rotLeftBtn];
+
+    UILabel *angLbl = [[UILabel alloc] initWithFrame:CGRectMake(519, 5, 44, 32)];
+    angLbl.textColor = [UIColor systemTealColor];
+    angLbl.font = [UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightBold];
+    angLbl.textAlignment = NSTextAlignmentCenter;
+    [panel addSubview:angLbl];
+    self.angleLabel = angLbl;
+
+    UIButton *rotRightBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    rotRightBtn.frame = CGRectMake(564, 5, 34, 32);
+    rotRightBtn.userInteractionEnabled = YES;
+    [rotRightBtn setTitleColor:[UIColor systemTealColor] forState:UIControlStateNormal];
+    rotRightBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [rotRightBtn setTitle:@"↻" forState:UIControlStateNormal];
+    [rotRightBtn addTarget:self action:@selector(rotateRight) forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:rotRightBtn];
+
+    UIButton *resetRotBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    resetRotBtn.frame = CGRectMake(600, 5, 44, 32);
+    resetRotBtn.userInteractionEnabled = YES;
+    [resetRotBtn setTitleColor:[UIColor lightGrayColor] forState:UIControlStateNormal];
+    resetRotBtn.titleLabel.font = [UIFont boldSystemFontOfSize:10];
+    [resetRotBtn setTitle:@"0°" forState:UIControlStateNormal];
+    [resetRotBtn addTarget:self action:@selector(resetRotation) forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:resetRotBtn];
 
     [root addSubview:panel];
     self.editPanel = panel;
@@ -553,7 +607,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     marker.layer.borderColor = [UIColor cyanColor].CGColor;
     marker.userInteractionEnabled = YES;
 
-    UILabel *caption = [[UILabel alloc] initWithFrame:CGRectMake(-55, 38, 146, 20)];
+    UILabel *caption = [[UILabel alloc] initWithFrame:CGRectMake(-65, 38, 166, 20)];
     caption.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.82];
     caption.textColor = [UIColor whiteColor];
     caption.font = [UIFont boldSystemFontOfSize:10];
@@ -618,6 +672,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     newB.normalizedX = 0.5;
     newB.normalizedY = 0.65;
     newB.swipeUpLength = 140.0;
+    newB.rotationDeg = 0.0;
     newB.moveDuration = 0.16;
     newB.triggerThreshold = 0.5;
 
@@ -705,6 +760,34 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [self refreshUI];
 }
 
+- (void)rotateLeft {
+    TouchActionBinding *b = [self currentBinding];
+    if (!b) return;
+    CGFloat next = b.rotationDeg - 15.0;
+    if (next <= -180.0) next += 360.0;
+    b.rotationDeg = next;
+    [self saveProfilesToFile];
+    [self refreshUI];
+}
+
+- (void)rotateRight {
+    TouchActionBinding *b = [self currentBinding];
+    if (!b) return;
+    CGFloat next = b.rotationDeg + 15.0;
+    if (next > 180.0) next -= 360.0;
+    b.rotationDeg = next;
+    [self saveProfilesToFile];
+    [self refreshUI];
+}
+
+- (void)resetRotation {
+    TouchActionBinding *b = [self currentBinding];
+    if (!b) return;
+    b.rotationDeg = 0.0;
+    [self saveProfilesToFile];
+    [self refreshUI];
+}
+
 - (void)cycleNextProfile {
     if (self.profiles.count == 0) return;
     NSUInteger idx = [self.profiles indexOfObject:self.activeProfile];
@@ -748,8 +831,9 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
                                     (unsigned long)self.activeProfile.bindings.count,
                                     b.label] forState:UIControlStateNormal];
     [self.inputTypeBtn setTitle:[NSString stringWithFormat:@"Pad: %@", inputName] forState:UIControlStateNormal];
-    self.lengthLabel.text = [NSString stringWithFormat:@"%.0f pt ↑", b.swipeUpLength];
-    self.markerCaptionLabel.text = [NSString stringWithFormat:@"%@ [%@]", b.label, inputName];
+    self.lengthLabel.text = [NSString stringWithFormat:@"%.0f pt", b.swipeUpLength];
+    self.angleLabel.text = [NSString stringWithFormat:@"%.0f°", b.rotationDeg];
+    self.markerCaptionLabel.text = [NSString stringWithFormat:@"%@ [%@] %.0f°", b.label, inputName, b.rotationDeg];
 
     UISlider *slider = [self.editPanel viewWithTag:201];
     if (slider) {
@@ -759,11 +843,14 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     CGSize size = self.editorWindow.bounds.size;
     CGFloat x = b.normalizedX * size.width;
     CGFloat y = b.normalizedY * size.height;
-    self.gestureMarker.center = CGPointMake(x, y);
+    CGPoint startPt = CGPointMake(x, y);
+    CGPoint endPt = [b targetPointFromStartPoint:startPt];
+
+    self.gestureMarker.center = startPt;
 
     UIBezierPath *path = [UIBezierPath bezierPath];
-    [path moveToPoint:CGPointMake(x, y)];
-    [path addLineToPoint:CGPointMake(x, y - b.swipeUpLength)];
+    [path moveToPoint:startPt];
+    [path addLineToPoint:endPt];
     self.swipePreviewLayer.path = path.CGPath;
 }
 
@@ -919,10 +1006,10 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     }
 }
 
-- (void)beginHoldSwipeUpForBinding:(TouchActionBinding *)binding {
+- (void)beginHoldSwipeForBinding:(TouchActionBinding *)binding {
     if (!binding) return;
     if (binding.isHolding) {
-        [self endHoldSwipeUpForBinding:binding];
+        [self endHoldSwipeForBinding:binding];
     }
 
     UIWindow *window = [self targetAppWindow];
@@ -931,8 +1018,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     CGSize size = window.bounds.size;
     CGPoint startPt = CGPointMake(binding.normalizedX * size.width,
                                   binding.normalizedY * size.height);
-    CGFloat targetY = startPt.y - binding.swipeUpLength;
-    CGPoint targetPt = CGPointMake(startPt.x, targetY);
+    CGPoint targetPt = [binding targetPointFromStartPoint:startPt];
     NSTimeInterval duration = MAX(binding.moveDuration > 0 ? binding.moveDuration : 0.16, 0.06);
 
     binding.isHolding = YES;
@@ -955,7 +1041,8 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
         }
         currentStep++;
         CGFloat progress = MIN((CGFloat)currentStep / (CGFloat)totalSteps, 1.0);
-        CGPoint nextPt = CGPointMake(startPt.x, startPt.y - (binding.swipeUpLength * progress));
+        CGPoint nextPt = CGPointMake(startPt.x + (targetPt.x - startPt.x) * progress,
+                                     startPt.y + (targetPt.y - startPt.y) * progress);
         binding.currentHeldPoint = nextPt;
 
         [strongSelf updateTouch:binding.activeTouch toWindowPoint:nextPt phase:UITouchPhaseMoved];
@@ -969,7 +1056,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     }];
 }
 
-- (void)endHoldSwipeUpForBinding:(TouchActionBinding *)binding {
+- (void)endHoldSwipeForBinding:(TouchActionBinding *)binding {
     if (!binding) return;
     binding.isHolding = NO;
 
