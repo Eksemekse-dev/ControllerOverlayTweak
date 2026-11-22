@@ -6,15 +6,25 @@
 #include <math.h>
 
 typedef NS_ENUM(NSInteger, PadInputBinding) {
-    PadInputRightTrigger = 0, // RT / R2
-    PadInputLeftTrigger  = 1, // LT / L2
-    PadInputButtonA      = 2, // A / Cross
-    PadInputButtonB      = 3, // B / Circle
-    PadInputButtonX      = 4, // X / Square
-    PadInputButtonY      = 5, // Y / Triangle
-    PadInputLeftShoulder = 6, // LB / L1
-    PadInputRightShoulder= 7  // RB / R1
+    PadInputRightTrigger      = 0,  // RT / R2
+    PadInputLeftTrigger       = 1,  // LT / L2
+    PadInputButtonA           = 2,  // A / Cross
+    PadInputButtonB           = 3,  // B / Circle
+    PadInputButtonX           = 4,  // X / Square
+    PadInputButtonY           = 5,  // Y / Triangle
+    PadInputLeftShoulder      = 6,  // LB / L1
+    PadInputRightShoulder     = 7,  // RB / R1
+    PadInputLeftStickUp       = 8,  // Lewa gałka: Góra
+    PadInputLeftStickDown     = 9,  // Lewa gałka: Dół
+    PadInputLeftStickLeft     = 10, // Lewa gałka: Lewo
+    PadInputLeftStickRight    = 11, // Lewa gałka: Prawo
+    PadInputRightStickUp      = 12, // Prawa gałka: Góra
+    PadInputRightStickDown    = 13, // Prawa gałka: Dół
+    PadInputRightStickLeft    = 14, // Prawa gałka: Lewo
+    PadInputRightStickRight   = 15  // Prawa gałka: Prawo
 };
+
+static const NSInteger kPadInputBindingCount = 16;
 
 @interface TouchActionBinding : NSObject
 @property (nonatomic, copy) NSString *label;
@@ -22,32 +32,44 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 @property (nonatomic, assign) CGFloat normalizedX;
 @property (nonatomic, assign) CGFloat normalizedY;
 @property (nonatomic, assign) CGFloat swipeUpLength;    // długość przesunięcia (w punktach)
-@property (nonatomic, assign) CGFloat rotationDeg;      // kąt obrotu w stopniach (0 = w górę, + = zgodnie ze wskazówkami zegara)
+@property (nonatomic, assign) CGFloat rotationDeg;      // kąt obrotu w stopniach (0 = w górę)
 @property (nonatomic, assign) NSTimeInterval moveDuration;
-@property (nonatomic, assign) CGFloat triggerThreshold;
+@property (nonatomic, assign) CGFloat triggerThreshold; // próg aktywacji dla spustu/gałki
 @property (nonatomic, assign) BOOL isHolding;
 @property (nonatomic, strong) UITouch *activeTouch;
 @property (nonatomic, assign) CGPoint currentHeldPoint;
 @property (nonatomic, strong) NSTimer *moveTimer;
 - (CGPoint)targetPointFromStartPoint:(CGPoint)startPt;
++ (BOOL)isThumbstickInput:(PadInputBinding)type;
 @end
 
 @implementation TouchActionBinding
++ (BOOL)isThumbstickInput:(PadInputBinding)type {
+    return (type >= PadInputLeftStickUp && type <= PadInputRightStickRight);
+}
+
 + (NSString *)nameForInputType:(PadInputBinding)type {
     switch (type) {
-        case PadInputRightTrigger:  return @"RT/R2";
-        case PadInputLeftTrigger:   return @"LT/L2";
-        case PadInputButtonA:       return @"A/✕";
-        case PadInputButtonB:       return @"B/○";
-        case PadInputButtonX:       return @"X/□";
-        case PadInputButtonY:       return @"Y/△";
-        case PadInputLeftShoulder:  return @"LB/L1";
-        case PadInputRightShoulder: return @"RB/R1";
+        case PadInputRightTrigger:    return @"RT/R2";
+        case PadInputLeftTrigger:     return @"LT/L2";
+        case PadInputButtonA:         return @"A/✕";
+        case PadInputButtonB:         return @"B/○";
+        case PadInputButtonX:         return @"X/□";
+        case PadInputButtonY:         return @"Y/△";
+        case PadInputLeftShoulder:    return @"LB/L1";
+        case PadInputRightShoulder:   return @"RB/R1";
+        case PadInputLeftStickUp:      return @"L-↑";
+        case PadInputLeftStickDown:    return @"L-↓";
+        case PadInputLeftStickLeft:    return @"L-←";
+        case PadInputLeftStickRight:   return @"L-→";
+        case PadInputRightStickUp:     return @"R-↑";
+        case PadInputRightStickDown:   return @"R-↓";
+        case PadInputRightStickLeft:   return @"R-←";
+        case PadInputRightStickRight:  return @"R-→";
     }
 }
 
 - (CGPoint)targetPointFromStartPoint:(CGPoint)startPt {
-    // Bazowy wektor w górę w układzie UIKit to (0, -swipeUpLength)
     CGFloat rad = self.rotationDeg * (CGFloat)(M_PI / 180.0);
     CGFloat baseX = 0.0;
     CGFloat baseY = -self.swipeUpLength;
@@ -65,20 +87,22 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
         @"swipeUpLength": @(self.swipeUpLength),
         @"rotationDeg": @(self.rotationDeg),
         @"moveDuration": @(self.moveDuration > 0 ? self.moveDuration : 0.16),
-        @"triggerThreshold": @(self.triggerThreshold > 0 ? self.triggerThreshold : 0.5)
+        @"triggerThreshold": @(self.triggerThreshold > 0 ? self.triggerThreshold : 0.55)
     };
 }
 
 + (instancetype)fromDictionary:(NSDictionary *)dict {
     TouchActionBinding *b = [[TouchActionBinding alloc] init];
     b.label = [dict[@"label"] isKindOfClass:[NSString class]] ? dict[@"label"] : @"Akcja";
-    b.inputType = [dict[@"inputType"] integerValue];
+    NSInteger rawType = [dict[@"inputType"] integerValue];
+    if (rawType < 0 || rawType >= kPadInputBindingCount) rawType = PadInputButtonA;
+    b.inputType = (PadInputBinding)rawType;
     b.normalizedX = dict[@"normalizedX"] ? [dict[@"normalizedX"] doubleValue] : 0.75;
     b.normalizedY = dict[@"normalizedY"] ? [dict[@"normalizedY"] doubleValue] : 0.75;
     b.swipeUpLength = dict[@"swipeUpLength"] ? [dict[@"swipeUpLength"] doubleValue] : 140.0;
     b.rotationDeg = dict[@"rotationDeg"] ? [dict[@"rotationDeg"] doubleValue] : 0.0;
     b.moveDuration = dict[@"moveDuration"] ? [dict[@"moveDuration"] doubleValue] : 0.16;
-    b.triggerThreshold = dict[@"triggerThreshold"] ? [dict[@"triggerThreshold"] doubleValue] : 0.5;
+    b.triggerThreshold = dict[@"triggerThreshold"] ? [dict[@"triggerThreshold"] doubleValue] : 0.55;
     return b;
 }
 @end
@@ -253,31 +277,31 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     b1.swipeUpLength = 120.0;
     b1.rotationDeg = 0.0;
     b1.moveDuration = 0.16;
-    b1.triggerThreshold = 0.5;
+    b1.triggerThreshold = 0.55;
 
     TouchActionBinding *b2 = [[TouchActionBinding alloc] init];
-    b2.label = @"Lewy Spust";
-    b2.inputType = PadInputLeftTrigger;
+    b2.label = @"Lewa Gałka Góra";
+    b2.inputType = PadInputLeftStickUp;
     b2.normalizedX = 0.25;
     b2.normalizedY = 0.75;
     b2.swipeUpLength = 160.0;
     b2.rotationDeg = 0.0;
-    b2.moveDuration = 0.18;
-    b2.triggerThreshold = 0.5;
+    b2.moveDuration = 0.16;
+    b2.triggerThreshold = 0.55;
 
     TouchProfile *p1 = [[TouchProfile alloc] init];
     p1.name = @"Profil 1";
     p1.bindings = [@[b1, b2] mutableCopy];
 
     TouchActionBinding *p2b1 = [[TouchActionBinding alloc] init];
-    p2b1.label = @"Długi Swipe A";
-    p2b1.inputType = PadInputButtonA;
+    p2b1.label = @"Prawa Gałka Prawo";
+    p2b1.inputType = PadInputRightStickRight;
     p2b1.normalizedX = 0.78;
     p2b1.normalizedY = 0.80;
-    p2b1.swipeUpLength = 240.0;
-    p2b1.rotationDeg = 0.0;
-    p2b1.moveDuration = 0.24;
-    p2b1.triggerThreshold = 0.5;
+    p2b1.swipeUpLength = 200.0;
+    p2b1.rotationDeg = 90.0;
+    p2b1.moveDuration = 0.18;
+    p2b1.triggerThreshold = 0.55;
 
     TouchProfile *p2 = [[TouchProfile alloc] init];
     p2.name = @"Profil 2";
@@ -330,6 +354,14 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     });
 }
 
+- (void)updateHoldState:(BOOL)activeNow forBinding:(TouchActionBinding *)b {
+    if (activeNow && !b.isHolding) {
+        [self beginHoldSwipeForBinding:b];
+    } else if (!activeNow && b.isHolding) {
+        [self endHoldSwipeForBinding:b];
+    }
+}
+
 - (void)handleButtonInput:(GCControllerButtonInput *)button value:(float)value pressed:(BOOL)pressed forType:(PadInputBinding)type {
     (void)button;
     __weak typeof(self) weakSelf = self;
@@ -341,13 +373,60 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
             if (b.inputType != type) continue;
 
             BOOL isAnalog = (type == PadInputRightTrigger || type == PadInputLeftTrigger);
-            BOOL activeNow = isAnalog ? (value >= b.triggerThreshold) : pressed;
+            CGFloat pressThresh = (b.triggerThreshold > 0.05) ? b.triggerThreshold : 0.55;
+            CGFloat releaseThresh = MAX(0.15, pressThresh - 0.15);
 
-            if (activeNow && !b.isHolding) {
-                [strongSelf beginHoldSwipeForBinding:b];
-            } else if (!activeNow && b.isHolding) {
-                [strongSelf endHoldSwipeForBinding:b];
+            BOOL activeNow = NO;
+            if (isAnalog) {
+                activeNow = b.isHolding ? (value > releaseThresh) : (value >= pressThresh);
+            } else {
+                activeNow = pressed;
             }
+            [strongSelf updateHoldState:activeNow forBinding:b];
+        }
+    });
+}
+
+- (void)handleThumbstickX:(float)xValue y:(float)yValue isRight:(BOOL)isRight {
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || !strongSelf.activeProfile) return;
+
+        for (TouchActionBinding *b in strongSelf.activeProfile.bindings) {
+            if (![TouchActionBinding isThumbstickInput:b.inputType]) continue;
+
+            BOOL bindingIsRight = (b.inputType >= PadInputRightStickUp);
+            if (bindingIsRight != isRight) continue;
+
+            CGFloat pressThresh = (b.triggerThreshold > 0.05) ? b.triggerThreshold : 0.55;
+            CGFloat releaseThresh = MAX(0.15, pressThresh - 0.15);
+            CGFloat thresh = b.isHolding ? releaseThresh : pressThresh;
+
+            // W GCController: yValue > 0 to góra, yValue < 0 to dół; xValue > 0 to prawo, xValue < 0 to lewo
+            BOOL dirMatch = NO;
+            switch (b.inputType) {
+                case PadInputLeftStickUp:
+                case PadInputRightStickUp:
+                    dirMatch = (yValue >= thresh && fabs(yValue) >= fabs(xValue) * 0.75);
+                    break;
+                case PadInputLeftStickDown:
+                case PadInputRightStickDown:
+                    dirMatch = (yValue <= -thresh && fabs(yValue) >= fabs(xValue) * 0.75);
+                    break;
+                case PadInputLeftStickLeft:
+                case PadInputRightStickLeft:
+                    dirMatch = (xValue <= -thresh && fabs(xValue) >= fabs(yValue) * 0.75);
+                    break;
+                case PadInputLeftStickRight:
+                case PadInputRightStickRight:
+                    dirMatch = (xValue >= thresh && fabs(xValue) >= fabs(yValue) * 0.75);
+                    break;
+                default:
+                    break;
+            }
+
+            [strongSelf updateHoldState:dirMatch forBinding:b];
         }
     });
 }
@@ -381,6 +460,16 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     };
     pad.rightShoulder.pressedChangedHandler = ^(GCControllerButtonInput *btn, float val, BOOL pressed) {
         [weakSelf handleButtonInput:btn value:val pressed:pressed forType:PadInputRightShoulder];
+    };
+
+    pad.leftThumbstick.valueChangedHandler = ^(GCControllerDirectionPad *dpad, float xValue, float yValue) {
+        (void)dpad;
+        [weakSelf handleThumbstickX:xValue y:yValue isRight:NO];
+    };
+
+    pad.rightThumbstick.valueChangedHandler = ^(GCControllerDirectionPad *dpad, float xValue, float yValue) {
+        (void)dpad;
+        [weakSelf handleThumbstickX:xValue y:yValue isRight:YES];
     };
 }
 
@@ -554,7 +643,6 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [lenSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [panel addSubview:lenSlider];
 
-    // Obrót suwaka/gestu w lewo (-15°) i w prawo (+15°)
     UIButton *rotLeftBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     rotLeftBtn.frame = CGRectMake(484, 5, 34, 32);
     rotLeftBtn.userInteractionEnabled = YES;
@@ -668,13 +756,13 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
     TouchActionBinding *newB = [[TouchActionBinding alloc] init];
     newB.label = [NSString stringWithFormat:@"Akcja %lu", (unsigned long)nextNum];
-    newB.inputType = PadInputButtonA;
+    newB.inputType = PadInputLeftStickUp;
     newB.normalizedX = 0.5;
     newB.normalizedY = 0.65;
     newB.swipeUpLength = 140.0;
     newB.rotationDeg = 0.0;
     newB.moveDuration = 0.16;
-    newB.triggerThreshold = 0.5;
+    newB.triggerThreshold = 0.55;
 
     [self.activeProfile.bindings addObject:newB];
     self.selectedBindingIndex = self.activeProfile.bindings.count - 1;
@@ -696,7 +784,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 - (void)cycleInputTypeForSelectedBinding {
     TouchActionBinding *b = [self currentBinding];
     if (!b) return;
-    NSInteger nextType = ((NSInteger)b.inputType + 1) % 8;
+    NSInteger nextType = ((NSInteger)b.inputType + 1) % kPadInputBindingCount;
     b.inputType = (PadInputBinding)nextType;
     [self saveProfilesToFile];
     [self refreshUI];
@@ -712,11 +800,11 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     }
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Podpis elementu"
-                                                                message:@"Wpisz nazwę dla tego przycisku lub suwaka:"
+                                                                message:@"Wpisz nazwę dla tego przycisku, gałki lub suwaka:"
                                                          preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
         textField.text = b.label;
-        textField.placeholder = @"np. Skok / Kamera";
+        textField.placeholder = @"np. Celowanie / Kamera";
         textField.clearButtonMode = UITextFieldViewModeWhileEditing;
     }];
 
