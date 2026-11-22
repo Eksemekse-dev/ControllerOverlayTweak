@@ -16,14 +16,14 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 };
 
 @interface TouchActionBinding : NSObject
-@property (nonatomic, copy) NSString *label;            // Podpis widoczny w UI i na ekranie
+@property (nonatomic, copy) NSString *label;
 @property (nonatomic, assign) PadInputBinding inputType;
-@property (nonatomic, assign) CGFloat normalizedX;      // 0.0 - 1.0 szerokości okna
-@property (nonatomic, assign) CGFloat normalizedY;      // 0.0 - 1.0 wysokości okna
-@property (nonatomic, assign) CGFloat swipeUpLength;    // długość przesunięcia w górę (w punktach)
-@property (nonatomic, assign) NSTimeInterval duration;  // czas trwania gestu (s)
-@property (nonatomic, assign) CGFloat triggerThreshold; // próg dla analogów (0.0 - 1.0)
-@property (nonatomic, assign) BOOL wasActive;           // stan zapobiegający wielokrotnemu odpaleniu
+@property (nonatomic, assign) CGFloat normalizedX;
+@property (nonatomic, assign) CGFloat normalizedY;
+@property (nonatomic, assign) CGFloat swipeUpLength;
+@property (nonatomic, assign) NSTimeInterval duration;
+@property (nonatomic, assign) CGFloat triggerThreshold;
+@property (nonatomic, assign) BOOL wasActive;
 @end
 
 @implementation TouchActionBinding
@@ -49,26 +49,9 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 @implementation TouchProfile
 @end
 
-@interface PassthroughOverlayView : UIView
-@property (nonatomic, assign) BOOL editMode;
-@end
-
-@implementation PassthroughOverlayView
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *hit = [super hitTest:point withEvent:event];
-    if (!self.editMode) {
-        // W trybie grania przepuszczamy dotyk dalej do aplikacji, chyba że kliknięto bezpośrednio w pasek nakładki
-        if (hit == self || hit == nil) {
-            return nil;
-        }
-    }
-    return hit;
-}
-@end
-
 @interface OverlayControllerManager : NSObject
 @property (nonatomic, strong) UIWindow *overlayWindow;
-@property (nonatomic, strong) PassthroughOverlayView *overlayView;
+@property (nonatomic, strong) UIView *overlayView;
 @property (nonatomic, strong) UIView *profileBar;
 @property (nonatomic, strong) UIView *editPanel;
 @property (nonatomic, strong) UIView *gestureMarker;
@@ -183,7 +166,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
         [self bindController:controller];
     }
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self showProfilePicker];
+        [self showOverlayControls];
     });
 }
 
@@ -191,11 +174,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     (void)note;
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([GCController controllers].count == 0 && !self.editMode) {
-            self.profileBar.hidden = YES;
-            self.editPanel.hidden = YES;
-            self.gestureMarker.hidden = YES;
-            self.swipePreviewLayer.hidden = YES;
-            [self restoreAppKeyWindow];
+            [self hideOverlay];
         }
     });
 }
@@ -274,34 +253,37 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
         win.windowLevel = UIWindowLevelAlert + 100;
         win.backgroundColor = [UIColor clearColor];
+        // Domyślnie ukryte i bez przechwytywania dotyku ręką
+        win.hidden = YES;
+        win.userInteractionEnabled = NO;
 
         UIViewController *rootVC = [[UIViewController alloc] init];
-        PassthroughOverlayView *overlay = [[PassthroughOverlayView alloc] initWithFrame:win.bounds];
+        UIView *overlay = [[UIView alloc] initWithFrame:win.bounds];
         overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         overlay.backgroundColor = [UIColor clearColor];
+        overlay.userInteractionEnabled = NO;
         rootVC.view = overlay;
 
         win.rootViewController = rootVC;
-        win.hidden = NO;
 
         self.overlayWindow = win;
         self.overlayView = overlay;
 
         [self buildUI];
-        [self restoreAppKeyWindow];
 
         if ([GCController controllers].count > 0) {
-            [self showProfilePicker];
+            [self showOverlayControls];
+        } else {
+            [self restoreAppKeyWindow];
         }
     });
 }
 
 - (void)buildUI {
-    // Górny pasek profilu i przełączania trybu edycji
     UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(20, 40, 420, 40)];
     bar.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.84];
     bar.layer.cornerRadius = 10;
-    bar.hidden = YES;
+    bar.userInteractionEnabled = YES;
 
     UIButton *profileBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     profileBtn.frame = CGRectMake(8, 4, 155, 32);
@@ -339,11 +321,11 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [self.overlayView addSubview:bar];
     self.profileBar = bar;
 
-    // Panel edycji wybranego przycisku/suwaka: wybór elementu, podpis, przycisk pada, długość przesunięcia
     UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(20, 86, 560, 42)];
     panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.86];
     panel.layer.cornerRadius = 10;
     panel.hidden = YES;
+    panel.userInteractionEnabled = YES;
 
     UIButton *cycleBindingBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     cycleBindingBtn.frame = CGRectMake(8, 5, 130, 32);
@@ -402,7 +384,6 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [self.overlayView addSubview:panel];
     self.editPanel = panel;
 
-    // Warstwa podglądu wektora przesunięcia w górę
     CAShapeLayer *preview = [CAShapeLayer layer];
     preview.strokeColor = [UIColor cyanColor].CGColor;
     preview.fillColor = [UIColor clearColor].CGColor;
@@ -412,13 +393,13 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [self.overlayView.layer addSublayer:preview];
     self.swipePreviewLayer = preview;
 
-    // Punkt startowy + podpis widoczny na ekranie
     UIView *marker = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 32, 32)];
     marker.backgroundColor = [[UIColor systemCyanColor] colorWithAlphaComponent:0.5];
     marker.layer.cornerRadius = 16;
     marker.layer.borderWidth = 2;
     marker.layer.borderColor = [UIColor cyanColor].CGColor;
     marker.hidden = YES;
+    marker.userInteractionEnabled = YES;
 
     UILabel *caption = [[UILabel alloc] initWithFrame:CGRectMake(-55, 34, 142, 20)];
     caption.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.78];
@@ -431,7 +412,6 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     self.markerCaptionLabel = caption;
 
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleMarkerPan:)];
-    pan.cancelsTouchesInView = NO;
     [marker addGestureRecognizer:pan];
 
     [self.overlayView addSubview:marker];
@@ -440,7 +420,10 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [self refreshUI];
 }
 
-- (void)showProfilePicker {
+- (void)showOverlayControls {
+    self.overlayWindow.hidden = NO;
+    self.overlayWindow.userInteractionEnabled = YES;
+    self.overlayView.userInteractionEnabled = YES;
     self.profileBar.hidden = NO;
     [self refreshUI];
     if (!self.editMode) {
@@ -450,17 +433,17 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
 - (void)hideOverlay {
     self.editMode = NO;
-    self.overlayView.editMode = NO;
     self.editPanel.hidden = YES;
     self.gestureMarker.hidden = YES;
     self.swipePreviewLayer.hidden = YES;
-    self.profileBar.hidden = YES;
+    self.overlayView.userInteractionEnabled = NO;
+    self.overlayWindow.userInteractionEnabled = NO;
+    self.overlayWindow.hidden = YES;
     [self restoreAppKeyWindow];
 }
 
 - (void)toggleEditMode {
     self.editMode = !self.editMode;
-    self.overlayView.editMode = self.editMode;
     self.editPanel.hidden = !self.editMode;
     self.gestureMarker.hidden = !self.editMode;
     self.swipePreviewLayer.hidden = !self.editMode;
