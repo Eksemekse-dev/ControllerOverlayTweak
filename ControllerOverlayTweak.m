@@ -257,21 +257,23 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
             if (@available(iOS 13.0, *)) {
                 bWin.windowScene = scene;
             }
-            bWin.windowLevel = UIWindowLevelAlert + 1000;
+            bWin.windowLevel = UIWindowLevelAlert + 500;
             bWin.backgroundColor = [UIColor clearColor];
+            bWin.userInteractionEnabled = YES;
             bWin.hidden = YES;
 
             UIViewController *vc = [[UIViewController alloc] init];
+            vc.view.frame = bWin.bounds;
             vc.view.backgroundColor = [UIColor clearColor];
+            vc.view.userInteractionEnabled = YES;
             bWin.rootViewController = vc;
 
             self.barWindow = bWin;
             [self buildBarUI];
         }
 
-        if ([GCController controllers].count > 0) {
-            [self showBar];
-        }
+        // Pokazujemy pasek po starcie, aby łatwo przetestować GUI nawet bez podłączonego pada
+        [self showBar];
     });
 }
 
@@ -284,12 +286,15 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     if (@available(iOS 13.0, *)) {
         eWin.windowScene = scene;
     }
-    eWin.windowLevel = UIWindowLevelAlert + 900;
+    eWin.windowLevel = UIWindowLevelAlert + 400;
     eWin.backgroundColor = [UIColor clearColor];
+    eWin.userInteractionEnabled = YES;
     eWin.hidden = YES;
 
     UIViewController *vc = [[UIViewController alloc] init];
+    vc.view.frame = eWin.bounds;
     vc.view.backgroundColor = [UIColor clearColor];
+    vc.view.userInteractionEnabled = YES;
     eWin.rootViewController = vc;
 
     self.editorWindow = eWin;
@@ -299,11 +304,13 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 - (void)buildBarUI {
     UIView *bar = [[UIView alloc] initWithFrame:self.barWindow.bounds];
     bar.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    bar.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
+    bar.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.88];
     bar.layer.cornerRadius = 10;
+    bar.userInteractionEnabled = YES;
 
     UIButton *profileBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     profileBtn.frame = CGRectMake(8, 4, 155, 32);
+    profileBtn.userInteractionEnabled = YES;
     [profileBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     profileBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     profileBtn.tag = 101;
@@ -312,6 +319,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
     UIButton *editBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     editBtn.frame = CGRectMake(170, 4, 100, 32);
+    editBtn.userInteractionEnabled = YES;
     [editBtn setTitleColor:[UIColor systemYellowColor] forState:UIControlStateNormal];
     editBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     editBtn.tag = 102;
@@ -321,6 +329,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
     UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     addBtn.frame = CGRectMake(276, 4, 72, 32);
+    addBtn.userInteractionEnabled = YES;
     [addBtn setTitleColor:[UIColor systemGreenColor] forState:UIControlStateNormal];
     addBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     [addBtn setTitle:@"+ Dodaj" forState:UIControlStateNormal];
@@ -329,6 +338,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
     UIButton *hideBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     hideBtn.frame = CGRectMake(354, 4, 58, 32);
+    hideBtn.userInteractionEnabled = YES;
     [hideBtn setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
     hideBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     [hideBtn setTitle:@"Ukryj" forState:UIControlStateNormal];
@@ -344,11 +354,13 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     UIView *root = self.editorWindow.rootViewController.view;
 
     UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(20, 92, 560, 42)];
-    panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.86];
+    panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.88];
     panel.layer.cornerRadius = 10;
+    panel.userInteractionEnabled = YES;
 
     UIButton *cycleBindingBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     cycleBindingBtn.frame = CGRectMake(8, 5, 130, 32);
+    cycleBindingBtn.userInteractionEnabled = YES;
     [cycleBindingBtn setTitleColor:[UIColor systemCyanColor] forState:UIControlStateNormal];
     cycleBindingBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
     [cycleBindingBtn addTarget:self action:@selector(cycleSelectedBinding) forControlEvents:UIControlEventTouchUpInside];
@@ -357,6 +369,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
     UIButton *renameBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     renameBtn.frame = CGRectMake(142, 5, 70, 32);
+    renameBtn.userInteractionEnabled = YES;
     [renameBtn setTitleColor:[UIColor systemYellowColor] forState:UIControlStateNormal];
     renameBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
     [renameBtn setTitle:@"Podpis" forState:UIControlStateNormal];
@@ -365,6 +378,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
     UIButton *inputBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     inputBtn.frame = CGRectMake(216, 5, 78, 32);
+    inputBtn.userInteractionEnabled = YES;
     [inputBtn setTitleColor:[UIColor systemOrangeColor] forState:UIControlStateNormal];
     inputBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
     [inputBtn addTarget:self action:@selector(cycleInputTypeForSelectedBinding) forControlEvents:UIControlEventTouchUpInside];
@@ -373,6 +387,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
     UIButton *minusBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     minusBtn.frame = CGRectMake(298, 5, 32, 32);
+    minusBtn.userInteractionEnabled = YES;
     [minusBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     minusBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     [minusBtn setTitle:@"-" forState:UIControlStateNormal];
@@ -388,6 +403,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
 
     UIButton *plusBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     plusBtn.frame = CGRectMake(406, 5, 32, 32);
+    plusBtn.userInteractionEnabled = YES;
     [plusBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     plusBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     [plusBtn setTitle:@"+" forState:UIControlStateNormal];
@@ -397,6 +413,7 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     UISlider *lenSlider = [[UISlider alloc] initWithFrame:CGRectMake(442, 5, 110, 32)];
     lenSlider.minimumValue = 20.0;
     lenSlider.maximumValue = 500.0;
+    lenSlider.userInteractionEnabled = YES;
     lenSlider.tag = 201;
     [lenSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [panel addSubview:lenSlider];
@@ -412,19 +429,21 @@ typedef NS_ENUM(NSInteger, PadInputBinding) {
     [root.layer addSublayer:preview];
     self.swipePreviewLayer = preview;
 
-    UIView *marker = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 32, 32)];
-    marker.backgroundColor = [[UIColor systemCyanColor] colorWithAlphaComponent:0.5];
-    marker.layer.cornerRadius = 16;
+    UIView *marker = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
+    marker.backgroundColor = [[UIColor systemCyanColor] colorWithAlphaComponent:0.55];
+    marker.layer.cornerRadius = 18;
     marker.layer.borderWidth = 2;
     marker.layer.borderColor = [UIColor cyanColor].CGColor;
+    marker.userInteractionEnabled = YES;
 
-    UILabel *caption = [[UILabel alloc] initWithFrame:CGRectMake(-55, 34, 142, 20)];
-    caption.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.78];
+    UILabel *caption = [[UILabel alloc] initWithFrame:CGRectMake(-55, 38, 146, 20)];
+    caption.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.82];
     caption.textColor = [UIColor whiteColor];
     caption.font = [UIFont boldSystemFontOfSize:10];
     caption.textAlignment = NSTextAlignmentCenter;
     caption.layer.cornerRadius = 5;
     caption.clipsToBounds = YES;
+    caption.userInteractionEnabled = NO;
     [marker addSubview:caption];
     self.markerCaptionLabel = caption;
 
